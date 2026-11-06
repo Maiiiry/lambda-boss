@@ -422,7 +422,7 @@ wrong. Parts 4 and 2 follow once Tim has used that in a rep set.
 
 ## Acceptance criteria
 
-- [ ] `StateStepParser` recognises SetVars-family (incl. SetVar-chain output) and array-family state
+- [x] `StateStepParser` recognises SetVars-family (incl. SetVar-chain output) and array-family state
       steps per the rules above, with bare or `<prefix>.` names only, and returns the state binding,
       input binding, state variables (key, binding name, GetVar line, next line) and output; unit
       tests include non-canonical lines, a cell-bound state, `v` after the GetVar lines, an extra
@@ -434,7 +434,7 @@ wrong. Parts 4 and 2 follow once Tim has used that in a rep set.
 - [ ] `/State` (edit): add / remove / rename per part 2, including `SetVar` layering on a non-SetVars
       sample state, chaining past 10, the dangling-reference block on remove, and rename tests near
       references (`$B$2`, `Sheet1!B2`, `t[b]`) and case collisions.
-- [ ] LET to LAMBDA: state binding first (badge `state`), input second (badge movable), other value
+- [x] LET to LAMBDA: state binding first (badge `state`), input second (badge movable), other value
       bindings Keep off; builder accepts the state binding though it is a calculation; sampling-only
       bindings dropped; editable fold line with an absolutised seed; Write fold to writes only when
       complete. Non-state LETs unchanged (existing tests pass untouched).
@@ -474,6 +474,38 @@ wrong. Parts 4 and 2 follow once Tim has used that in a rep set.
 - The faster GetVar/SetVars replace the current ones (same API and state format) rather than living
   alongside as new names.
 - First slice is the add-in work in two PRs (Part 3, then Part 1).
+
+Taken while building Part 3 (Labs switch `state-let-to-lambda`, "State steps in LET to LAMBDA"):
+
+- A `SetVar` chain on a `SetVars` call counts as an output, as well as a chain on the state, because
+  Part 1 writes that shape past ten variables.
+- Array reads also accept the two-index forms of a row or column state: `INDEX(S, 1, k)`,
+  `INDEX(S, , k)`, `INDEX(S, k, 1)`. The position must be a number literal within the output's size,
+  and the output needs at least two values, so an ordinary `INDEX` of a range plus `HSTACK` rarely
+  reads as a step. An array step also needs an input its rules read: without one it's a lookup, and
+  LET to LAMBDA shows the ordinary dialog.
+- State variables also list keys read inline (no canonical line) and keys only the output sets, after
+  the read ones.
+- The input rule counts bindings read through a helper line or directly in the output's own
+  expressions as "read by a next line", and tries a relative cell before a `$`-anchored one, so
+  `maxB, $K$2` loses to `inp, H270`. A binding named `v` that reads the state isn't the input. A
+  binding the rules read beats one only passed straight to the output (`SetVars("last", inp)`), which
+  is the input only if it's a single cell or `INDEX` and nothing else qualifies. Names bound inside an
+  inner `LET` or `LAMBDA` don't count as reads here.
+- An input bound to a calculation (`v, INDEX(G1:G9, 1)`, the part 4 stepper) is a parameter too, so
+  the builder accepts any calculation the dialog lists on a state step. One left Keep off is made
+  absolute, like any excluded input.
+- The seed writes other LET bindings in place (`input1`, `k`), since a cell can't see them, and is
+  flattened to one line. It's rewritten on the formula tree, not with `ApplyRenames` and
+  `AbsolutizeCellRefs`, which corrupt `$B$2`, `t[b]`, `LOG10(` and quoted sheet names.
+- The fold line also takes `SCAN` and a wrapped fold (`=TEXTJOIN(" ",,REDUCE(…))`). Renaming the
+  LAMBDA rewrites only a step argument that is empty or the previous name, so Tim's edits survive.
+- **Write fold to** takes a cell on the active sheet and never overwrites a filled cell: the LAMBDA
+  is registered and a message says the fold wasn't written.
+- Tab order in the dialog is name, fold, target, then the input rows, and Alt+F jumps to the fold.
+  Ctrl+C copies the fold unless text is selected in a box.
+- The `input` badge moves with a **make input** button on the other rows. The row that loses it goes
+  Keep off.
 
 ## Appendix — GetVar hot-loop benchmark (6 Nov 2026)
 
