@@ -6,6 +6,31 @@ using LambdaBoss.Common;
 namespace LambdaBoss;
 
 /// <summary>
+///     Which branch of Lambda Boss's own library the add-in reads.
+/// </summary>
+public enum LibraryChannel
+{
+    Stable,
+    Labs
+}
+
+/// <summary>
+///     Saves the channel by name and reads anything unknown as Stable, so one bad value can't
+///     reset the rest of the user's settings.
+/// </summary>
+internal sealed class LibraryChannelConverter : JsonConverter<LibraryChannel>
+{
+    public override LibraryChannel Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) =>
+        reader.TokenType == JsonTokenType.String
+        && string.Equals(reader.GetString(), nameof(LibraryChannel.Labs), StringComparison.OrdinalIgnoreCase)
+            ? LibraryChannel.Labs
+            : LibraryChannel.Stable;
+
+    public override void Write(Utf8JsonWriter writer, LibraryChannel value, JsonSerializerOptions options) =>
+        writer.WriteStringValue(value.ToString());
+}
+
+/// <summary>
 ///     Persists user settings to %APPDATA%\LambdaBoss\settings.json.
 /// </summary>
 public sealed class Settings
@@ -21,12 +46,13 @@ public sealed class Settings
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         WriteIndented = true,
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        Converters = { new LibraryChannelConverter() }
     };
 
     private static readonly RepoConfig DefaultRepo = new()
     {
-        Url = "https://github.com/TagloGit/lambda-boss"
+        Url = RepoConfig.HomeRepoUrl
     };
 
     private static Settings? _current;
@@ -56,6 +82,16 @@ public sealed class Settings
     /// </summary>
     [JsonIgnore]
     public TimeSpan? CacheTtl => CacheTtlMinutes > 0 ? TimeSpan.FromMinutes(CacheTtlMinutes) : null;
+
+    /// <summary>
+    ///     Which branch of Lambda Boss's own library to read: Stable (main) or Labs (develop).
+    /// </summary>
+    public LibraryChannel LibraryChannel { get; set; } = LibraryChannel.Stable;
+
+    /// <summary>
+    ///     Labs switches that are on, by switch id. See <see cref="Labs"/>.
+    /// </summary>
+    public HashSet<string> LabsSwitchesOn { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     ///     Returns the current settings instance, loading from disk on first access.
@@ -115,14 +151,21 @@ public sealed class Settings
     }
 
     /// <summary>
-    ///     Returns only the enabled repos.
+    ///     Returns only the enabled repos, each pointed at the branch the library channel selects.
+    ///     Lambda Boss's own repo follows the channel; other repos stay on main.
     /// </summary>
+    [JsonIgnore]
     public IReadOnlyList<RepoConfig> EnabledRepos =>
-        Repos.Where(r => r.Enabled).ToList();
+        Repos.Where(r => r.Enabled)
+            .Select(r => r.OnBranch(r.IsHomeRepo && LibraryChannel == LibraryChannel.Labs
+                ? RepoConfig.LabsBranch
+                : RepoConfig.StableBranch))
+            .ToList();
 
     /// <summary>
     ///     Returns only the enabled local sources.
     /// </summary>
+    [JsonIgnore]
     public IReadOnlyList<LocalSourceConfig> EnabledLocalSources =>
         LocalSources.Where(s => s.Enabled).ToList();
 
