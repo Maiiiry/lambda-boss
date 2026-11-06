@@ -1,0 +1,3 @@
+name: Channel Probe
+description: Temporary proof for lambda-boss 390, only on develop
+default_prefix: probe
