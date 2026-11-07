@@ -28,6 +28,22 @@ internal static class FormulaParser
     };
 
     /// <summary>
+    ///     Splits <paramref name="formula" /> into tokens without building a tree, ending
+    ///     with an <see cref="FormulaTokenType.Eof" /> token. Text between tokens is whitespace.
+    ///     A character the grammar doesn't know (a DDE <c>|</c>, a non-breaking space) becomes an
+    ///     operator token, so what's around it still reads.
+    /// </summary>
+    /// <exception cref="ArgumentNullException"><paramref name="formula" /> is null.</exception>
+    /// <exception cref="FormatException">An unterminated string, bracket or quoted name.</exception>
+    public static IReadOnlyList<FormulaToken> Tokenize(string formula)
+    {
+        if (formula is null)
+            throw new ArgumentNullException(nameof(formula));
+
+        return Lex(formula, lenient: true);
+    }
+
+    /// <summary>
     ///     Parses <paramref name="formula" /> (with or without a leading <c>=</c>)
     ///     into an expression tree.
     /// </summary>
@@ -45,7 +61,7 @@ internal static class FormulaParser
 
     // ---------------------------------------------------------------- Lexer
 
-    private static List<FormulaToken> Lex(string s)
+    private static List<FormulaToken> Lex(string s, bool lenient = false)
     {
         var tokens = new List<FormulaToken>();
         var i = 0;
@@ -159,6 +175,13 @@ internal static class FormulaParser
 
             // Single-character operators.
             if (IsOperatorChar(c))
+            {
+                i++;
+                tokens.Add(new FormulaToken(FormulaTokenType.Operator, lead, s[start..i], start));
+                continue;
+            }
+
+            if (lenient)
             {
                 i++;
                 tokens.Add(new FormulaToken(FormulaTokenType.Operator, lead, s[start..i], start));
@@ -351,7 +374,7 @@ internal static class FormulaParser
         return i;
     }
 
-    private static int SkipSingleQuoted(string s, int i)
+    internal static int SkipSingleQuoted(string s, int i)
     {
         // i points at the opening single quote. '' is an escaped literal quote.
         i++;
@@ -374,7 +397,7 @@ internal static class FormulaParser
         throw new FormatException("Unterminated quoted sheet/workbook name in formula.");
     }
 
-    private static int SkipBrackets(string s, int i)
+    internal static int SkipBrackets(string s, int i)
     {
         // i points at the opening '['. Brackets may nest (t[[A]:[B]]); inside,
         // a leading single quote escapes the next character ('[ '] '# '@ '').
@@ -432,7 +455,8 @@ internal static class FormulaParser
             return j < n && s[j] == '!';
         }
 
-        while (j < n && (char.IsLetterOrDigit(s[j]) || s[j] == '_' || s[j] == '.' || s[j] == ' '))
+        // An unquoted sheet name has no spaces: in A1:B2 Sheet1!C3 the space is an intersection.
+        while (j < n && (char.IsLetterOrDigit(s[j]) || s[j] == '_' || s[j] == '.'))
             j++;
         return j < n && s[j] == '!';
     }
