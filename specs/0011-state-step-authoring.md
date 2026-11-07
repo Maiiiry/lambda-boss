@@ -145,14 +145,15 @@ until a different target is typed).
   and Tim replaces each RHS with the rule. No `#NAME?` or `#VALUE!` while the step is half-written.
 - Next-line names are `next` + the variable with its first letter upper-cased (`p` → `nextP`,
   `best` → `nextBest`), matching Tim's own convention.
-- Enter saves, Escape cancels (same keys as the other dialogs). One Excel operation (`Formula2`),
-  native undo.
+- Enter saves, Escape cancels (same keys as the other dialogs). One Excel operation (`Formula2`).
+  It doesn't get native undo: a COM write clears Excel's undo stack, as with every add-in command
+  (checked in the VM: Ctrl+Z left the step in place).
 
 **Edge cases.**
 
 - *Binding names Excel rejects.* `c`, `r`, `C`, `R`, A1-style references (`b4`, `x1`, `ab12`) and
   R1C1-style ones (`R1C1`, `RC`, `R1C`, `RC1`) are invalid LET names. `ExcelNameValidator` is the
-  source of truth; it covers A1 and `RnCn` today and gains the `RC`/`RnC`/`RCn` forms in this work.
+  source of truth for A1 and `RnCn`; the scaffold adds the `RC`/`RnC`/`RCn` forms.
   The binding is suffixed with `_` (`c_`, `b4_`); the state key stays as typed (`GetVar(a, "c")`).
   The preview shows it.
 - *Clashes.* A name typed twice → error in the dialog. A `nextX` that equals another state name →
@@ -427,7 +428,7 @@ wrong. Parts 4 and 2 follow once Tim has used that in a rep set.
       input binding, state variables (key, binding name, GetVar line, next line) and output; unit
       tests include non-canonical lines, a cell-bound state, `v` after the GetVar lines, an extra
       constant binding (`maxB, $K$2`), comments-as-bindings, a nested LET in a next line, and non-steps.
-- [ ] `/State` (scaffold): popup command; dialog with State / Input / Write-to; selection prefill
+- [x] `/State` (scaffold): popup command; dialog with State / Input / Write-to; selection prefill
       from a 2×k label/value block; exact output text as above; `_`-suffixed binding names for
       `c`/`r`/A1/R1C1-like names; `nextX2` on clash; SetVar chaining past 10; prefix detection and
       library auto-load; refuses a non-empty target.
@@ -506,6 +507,34 @@ Taken while building Part 3 (Labs switch `state-let-to-lambda`, "State steps in 
   Ctrl+C copies the fold unless text is selected in a box.
 - The `input` badge moves with a **make input** button on the other rows. The row that loses it goes
   Keep off.
+
+Taken while building Part 1 (Labs switch `state-scaffold`, "/State: new state step"):
+
+- `/State` is hidden from the popup's command list while the switch is off.
+- A variable named `a` or `v` takes the `_` suffix like any rejected name, so the step's own bindings
+  keep their names (`a_, GetVar(a, "a")`).
+- Two keys that land on one binding stay apart with another `_` (`c` gives `c_`, `c_` gives `c__`).
+- A key with a dot keeps its key, but its binding goes through `LetNameSanitizer`, because Excel refuses
+  a dot in a LET name (`a.b` gives `aB`). A key that can't start a name (`1st`) does the same.
+- A name with no value is an error in the dialog (`p needs a value`), not a blank.
+- A selection that isn't a 2×k block with text in every label counts as no prefill, as with a single
+  cell: State is empty and Write to is the active cell.
+- After a prefill the caret starts in Input, the only field left to fill. After Save the target is
+  selected, ready for F2.
+- The library counts as loaded only when `SetVars`, `SetVar` and `GetVar` are all there under one
+  prefix. With several prefixes, the first by ordinal order wins.
+- The dialog can't ask Excel about a typed target, because Excel's thread is waiting on it. Save checks
+  the cell, and if it's filled the dialog re-opens with what was typed and Save disabled for that cell.
+- The first empty cell below a block is searched for within 1,000 rows.
+- `RC`, `RnC` and `RCn` are suffixed by the scaffold alone, not in `ExcelNameValidator` as this spec
+  first said: Excel takes `rc` and `R1C` as LET names, so changing the validator would have refused them
+  in Refactor, Unnest and Gather for everyone. `RC1` itself is refused by LET in this build.
+- A variable named like a library call (`SetVars`, `SetVar`, `GetVar`) is suffixed too, so it can't hide
+  the call.
+- An Input may start with `=`. A value with a literal, a space and more (`p 0 b 4`) is an error, not an
+  intersection: it's a missing comma.
+- While the library loads Excel is free, so Save checks the workbook and the target again before
+  changing anything, and refuses with a message if either moved on.
 
 Taken while fixing #403 (`ApplyRenames` and `AbsolutizeCellRefs` on tokens). Excel 16.0 build 20527
 in `taglo-win` settled these:
