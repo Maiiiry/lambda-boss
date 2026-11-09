@@ -7,8 +7,8 @@ using LambdaBoss.Common;
 namespace LambdaBoss;
 
 /// <summary>
-///     Argument hints for library LAMBDAs (spec 0013), behind the <see cref="Labs.LambdaIntelliSense"/>
-///     switch. ExcelDna.IntelliSense draws the tooltips; it reads <c>&lt;xll&gt;.intellisense.xml</c>
+///     Argument hints for library LAMBDAs (spec 0013), on unless <see cref="Settings.ArgumentHints"/>
+///     is turned off. ExcelDna.IntelliSense draws the tooltips; it reads <c>&lt;xll&gt;.intellisense.xml</c>
 ///     beside every loaded Excel-DNA add-in, so this class keeps that file in step with
 ///     <see cref="Catalog"/> and asks the server to refresh. Nothing here runs while the user types.
 /// </summary>
@@ -20,10 +20,10 @@ internal static class LambdaHints
 
     internal static LambdaHintCatalog Catalog { get; } = new();
 
-    private static bool Enabled => Labs.IsOn(Labs.LambdaIntelliSense);
+    private static bool Enabled => Settings.Current.ArgumentHints;
 
     /// <summary>
-    ///     Starts the hints if the switch is on. Must run in a macro context (AutoOpen or QueueAsMacro).
+    ///     Starts the hints if Settings.ArgumentHints is on. Must run in a macro context (AutoOpen or QueueAsMacro).
     /// </summary>
     public static void StartIfEnabled()
     {
@@ -64,7 +64,7 @@ internal static class LambdaHints
 
     /// <summary>
     ///     Stops the hints. Must run in a macro context. With <paramref name="removeFile"/>
-    ///     the XML file goes too (switch turned off); on AutoClose it stays for the next session.
+    ///     the XML file goes too (hints turned off); on AutoClose it stays for the next session.
     /// </summary>
     public static void Stop(bool removeFile)
     {
@@ -93,7 +93,7 @@ internal static class LambdaHints
     }
 
     /// <summary>
-    ///     Applies the switch after the settings window saves. Safe from any thread.
+    ///     Applies Settings.ArgumentHints after the settings window saves. Safe from any thread.
     /// </summary>
     public static void ApplySwitch()
     {
