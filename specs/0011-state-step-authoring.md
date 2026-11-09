@@ -443,9 +443,9 @@ wrong. Parts 4 and 2 follow once Tim has used that in a rep set.
       formula; SetVars prototype with `k` stepper, array prototype on the seed; target cell rule;
       fold untouched; the new several-folds message; LET to LAMBDA round-trips the prototype back to
       the same LAMBDA text.
-- [ ] `SplitState` reads by key from the first state's keys; harness tests add a SetVar-reordered
+- [x] `SplitState` reads by key from the first state's keys; harness tests add a SetVar-reordered
       column and a missing key; existing tests unchanged.
-- [ ] Faster `GetVar`/`SetVars` pass the existing harness tests unchanged, keep unique keys (test:
+- [x] Faster `GetVar`/`SetVars` pass the existing harness tests unchanged, keep unique keys (test:
       `SetVars("x", 1, "x", 2)` gives the same text as today); the appendix benchmark re-run shows
       the new numbers.
 
@@ -588,6 +588,16 @@ Taken while building Part 2 (Labs switch `state-edit`, "/State: edit a state ste
 - A rename onto a key only the sample holds is blocked.
 - A `SetVar` over a call (the stepper's `IF(k = 1, …)`) no longer counts as building a state, so the
   fold's seed slot stays empty as it does for the stepper itself. A `SetVar` over a cell still fills it.
+
+Taken while making `SplitState` read by key (Part 5; library only, so no Labs switch: it reaches the
+Labs channel on merge to `develop`):
+
+- The columns are the first state's keys, in its order. A key that only later rows hold isn't shown;
+  `SplitState` doesn't widen the table as the run goes.
+- Keys match ignoring case and take the first entry, the same read as `GetVar` (TEXTAFTER/TEXTBEFORE
+  on the separators), so the table shows what `GetVar` would return.
+- An empty first state (`NewState()`) shows `(empty)` as before. Later rows then have no keys to read
+  and show `#N/A`; the old positional read showed their first value.
 
 Taken while fixing #403 (`ApplyRenames` and `AbsolutizeCellRefs` on tokens). Excel 16.0 build 20527
 in `taglo-win` settled these:
