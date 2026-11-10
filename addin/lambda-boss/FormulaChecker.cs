@@ -58,6 +58,12 @@ internal sealed record FormulaProblem(
     /// <summary>The bracket repair (issue #426) clears it: it is a consequence of the bracket, not a problem of its own.</summary>
     public bool IsConsequence { get; init; }
 
+    /// <summary>
+    ///     Text that could replace this problem's span (a mistyped name's nearest valid names, as
+    ///     they'd be written), nearest first; at most 3. Empty when there's no safe one-span fix.
+    /// </summary>
+    public IReadOnlyList<string> Replacements { get; init; } = Array.Empty<string>();
+
     /// <summary>A bracket, comma, shape or argument-count fault: the kind one misplaced <c>)</c> can cause.</summary>
     public bool IsStructural => Kind is FormulaProblemKind.ExtraCloseBracket or FormulaProblemKind.UnclosedBracket
                                     or FormulaProblemKind.CommaOutsideFunction or FormulaProblemKind.BadShape
@@ -313,7 +319,7 @@ internal static class FormulaChecker
     public const int MaxRepairLength = 12000;
 
     /// <summary>The repair search stops after this long and says so.</summary>
-    public static TimeSpan RepairBudget { get; set; } = TimeSpan.FromMilliseconds(150);
+    public static TimeSpan RepairBudget { get; set; } = TimeSpan.FromMilliseconds(400);
 
     /// <summary>
     ///     Tries every single <c>)</c> removal, and every <c>)</c> insertion where an argument ends
@@ -388,21 +394,9 @@ internal static class FormulaChecker
                 break;
             tried++;
 
-            var fixedText = insert ? formula.Insert(pos, ")") : formula.Remove(pos, 1);
-            var edited = new List<FormulaToken>(tokens.Count + 1);
-            FormulaToken? inserted = null;
-            for (var i = 0; i < tokens.Count; i++)
-            {
-                if (insert && i == index)
-                {
-                    inserted = new FormulaToken(FormulaTokenType.RParen, "", ")", pos);
-                    edited.Add(inserted);
-                }
-
-                if (!insert && i == index)
-                    continue;
-                edited.Add(tokens[i]);
-            }
+            // A view of the tokens with the one edit, rather than a copy: the re-check is the cost.
+            var inserted = insert ? new FormulaToken(FormulaTokenType.RParen, "", ")", pos) : null;
+            var edited = new EditedTokens(tokens, index, inserted);
 
             var found = new List<FormulaProblem>();
             // Stop reading once it can't beat (or tie) the best edit so far.
@@ -412,6 +406,7 @@ internal static class FormulaChecker
             if (remaining > best)
                 continue;
             best = remaining;
+            var fixedText = insert ? formula.Insert(pos, ")") : formula.Remove(pos, 1);
 
             // The call the edit changes: the one the inserted ) now closes, or the one the
             // removed ) used to close (it now runs further).
@@ -465,6 +460,35 @@ internal static class FormulaChecker
             return (RepairOutcome.Several, valid.Take(5).ToList(), cut);
         var fewest = ranked[0].Remaining;
         return (RepairOutcome.Closest, ranked.Where(r => r.Remaining == fewest).Take(3).ToList(), cut);
+    }
+
+    /// <summary>The token list with one token removed (<c>inserted</c> null) or one inserted before <c>index</c>.</summary>
+    private sealed class EditedTokens : IReadOnlyList<FormulaToken>
+    {
+        private readonly IReadOnlyList<FormulaToken> _tokens;
+        private readonly int _index;
+        private readonly FormulaToken? _inserted;
+
+        public EditedTokens(IReadOnlyList<FormulaToken> tokens, int index, FormulaToken? inserted)
+        {
+            _tokens = tokens;
+            _index = index;
+            _inserted = inserted;
+        }
+
+        public int Count => _tokens.Count + (_inserted is null ? -1 : 1);
+
+        public FormulaToken this[int i] => _inserted is null
+            ? _tokens[i < _index ? i : i + 1]
+            : i < _index ? _tokens[i] : i == _index ? _inserted : _tokens[i - 1];
+
+        public IEnumerator<FormulaToken> GetEnumerator()
+        {
+            for (var i = 0; i < Count; i++)
+                yield return this[i];
+        }
+
+        System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
     }
 
     /// <summary>A call and the <c>)</c> that closed it, in a pass's own token coordinates.</summary>
@@ -599,6 +623,9 @@ internal static class FormulaChecker
 
         /// <summary>The range came from a library LAMBDA's header, not Excel's own table.</summary>
         public bool ArityFromLibrary { get; set; }
+
+        /// <summary>A quick pass already counted "too many arguments" at a comma.</summary>
+        public bool ArityReported { get; set; }
 
         public int ArgIndex { get; set; }
         public int ArgTokens { get; set; }
@@ -781,6 +808,15 @@ internal static class FormulaChecker
             }
 
             FinishArgument(f, isLast: false);
+
+            // The repair search's re-checks: a call past its maximum is a fault now, not at its
+            // ), so the re-check can stop here instead of reading to the end.
+            if (_quick && f.Arity is { } a && !f.ArityReported && f.ArgIndex + 2 > a.Max)
+            {
+                f.ArityReported = true;
+                Add(new FormulaProblem(FormulaProblemKind.ArgumentCount, f.Start, 0, ""));
+            }
+
             f.ArgIndex++;
             f.ArgTokens = 0;
             f.ArgFirst = null;
@@ -891,7 +927,7 @@ internal static class FormulaChecker
                 Add(new FormulaProblem(FormulaProblemKind.BadShape, f.Start, f.Open.End - f.Start,
                     $"LAMBDA needs at least a calculation.{at}"));
             }
-            else if (f.Arity is { } a && closer is not null && (argCount < a.Min || argCount > a.Max))
+            else if (f.Arity is { } a && closer is not null && !f.ArityReported && (argCount < a.Min || argCount > a.Max))
             {
                 var name = f.NameToken!.Text;
                 var has = $"{name} has {argCount} argument{(argCount == 1 ? "" : "s")}";
@@ -1042,7 +1078,9 @@ internal static class FormulaChecker
                 ? candidates.Concat(ExcelFunctions.All)
                 : candidates.Concat(_names.Tables.Keys);
 
-            var nearest = Nearest(name, candidates);
+            var candidateList = candidates.ToList();
+            var nearest = Nearest(name, candidateList);
+            var replacements = nearest is null ? Array.Empty<string>() : NearestAll(name, candidateList);
             string message;
             if (nearest is not null)
             {
@@ -1063,7 +1101,8 @@ internal static class FormulaChecker
             if (!_names.NamesRead)
                 message += " (The workbook's names haven't been read yet, so it may be a defined name: check a cell once to read them.)";
 
-            Add(new FormulaProblem(FormulaProblemKind.UnknownName, tok.Start, tok.Text.Length, message, nearest));
+            Add(new FormulaProblem(FormulaProblemKind.UnknownName, tok.Start, tok.Text.Length, message, nearest)
+                { Replacements = replacements });
         }
 
         /// <summary>
@@ -1123,7 +1162,8 @@ internal static class FormulaChecker
                                      || _names.DefinedNames.Contains($"{sheet}!{rest}"))
                 return;
 
-            var nearest = Nearest(rest, _names.DefinedNames.Select(n => n[(n.LastIndexOf('!') + 1)..]));
+            var pool = _names.DefinedNames.Select(n => n[(n.LastIndexOf('!') + 1)..]).ToList();
+            var nearest = Nearest(rest, pool);
             Add(new FormulaProblem(FormulaProblemKind.UnknownName, tok.Start + bang + 1, rest.Length,
                 $"{rest} isn't a cell or a defined name on {sheetPart}." +
                 (nearest is null ? "" : $" Did you mean {nearest}?"), nearest));
@@ -1148,7 +1188,8 @@ internal static class FormulaChecker
                     return;
                 var near = Nearest(tableText, _names.Tables.Keys);
                 Add(new FormulaProblem(FormulaProblemKind.UnknownReference, tok.Start + (bang + 1), tableText.Length,
-                    $"There's no table called {tableText}." + (near is null ? "" : $" Did you mean {near}?"), near));
+                    $"There's no table called {tableText}." + (near is null ? "" : $" Did you mean {near}?"), near)
+                    { Replacements = near is null ? Array.Empty<string>() : NearestAll(tableText, _names.Tables.Keys) });
                 return;
             }
 
@@ -1159,7 +1200,12 @@ internal static class FormulaChecker
                 var near = Nearest(col, columns);
                 Add(new FormulaProblem(FormulaProblemKind.UnknownReference, tok.Start + offset, rawLength,
                     $"Table {tableText} has no column called {col}." + (near is null ? "" : $" Did you mean {near}?"),
-                    near));
+                    near)
+                    {
+                        Replacements = near is null
+                            ? Array.Empty<string>()
+                            : NearestAll(col, columns).Select(EscapeColumn).ToList()
+                    });
             }
         }
     }
@@ -1293,6 +1339,39 @@ internal static class FormulaChecker
         }
 
         return bestDistance <= limit ? best : null;
+    }
+
+    /// <summary>
+    ///     Every candidate close enough to be a typo of <paramref name="name"/> (the limits of
+    ///     <see cref="Nearest"/>), nearest first, distinct, at most <paramref name="max"/>.
+    /// </summary>
+    internal static IReadOnlyList<string> NearestAll(string name, IEnumerable<string> candidates, int max = 3)
+    {
+        var limit = name.Length <= 4 ? 1 : name.Length <= 8 ? 2 : 3;
+        var upper = name.ToUpperInvariant();
+        return candidates
+            .Where(c => Math.Abs(c.Length - name.Length) <= limit && !c.Equals(name, StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(c => (Name: c, D: Distance(upper, c.ToUpperInvariant(), limit)))
+            .Where(x => x.D <= limit)
+            .OrderBy(x => x.D)
+            .Take(max)
+            .Select(x => x.Name)
+            .ToList();
+    }
+
+    /// <summary>A table column name as written inside <c>[ ]</c>: <c>' [ ] #</c> escaped with <c>'</c>.</summary>
+    internal static string EscapeColumn(string column)
+    {
+        var sb = new System.Text.StringBuilder();
+        foreach (var ch in column)
+        {
+            if (ch is '\'' or '[' or ']' or '#')
+                sb.Append('\'');
+            sb.Append(ch);
+        }
+
+        return sb.ToString();
     }
 
     /// <summary>Optimal-string-alignment distance; returns more than <paramref name="cap"/> early when it can.</summary>
