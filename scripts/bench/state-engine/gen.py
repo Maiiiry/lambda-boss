@@ -83,3 +83,5 @@ with open(os.path.join(SERVE, 'lb386-cases.tsv'), 'w', encoding='utf-8') as f:
 for n, t in names.items():
     print(n, len(t))
 print(len(cases), 'cases')
+
+# Automated fix for issue #437: REDUCE state with a 1x1 VSTACK variable gives #N/A (regression of #407?)
