@@ -208,24 +208,30 @@ public class LibraryChannelTests : IDisposable
     }
 
     [Fact]
-    public void StateLetToLambda_IsListedAndOffByDefault()
+    public void State_IsOneSwitch_ListedAndOffByDefault()
     {
-        Assert.Contains(Labs.StateLetToLambda, Labs.All);
-        Assert.DoesNotContain(Labs.StateLetToLambda.Id, new Settings().LabsSwitchesOn);
+        Assert.Contains(Labs.State, Labs.All);
+        Assert.DoesNotContain(Labs.State.Id, new Settings().LabsSwitchesOn);
+        Assert.DoesNotContain(Labs.All, s =>
+            s.Id is "state-let-to-lambda" or "state-scaffold" or "state-edit-lambda" or "state-edit");
     }
 
     [Fact]
-    public void StateEditLambda_IsListedAndOffByDefault()
+    public void State_OldSwitchesMapToTheNewOne()
     {
-        Assert.Contains(Labs.StateEditLambda, Labs.All);
-        Assert.DoesNotContain(Labs.StateEditLambda.Id, new Settings().LabsSwitchesOn);
-    }
-
-    [Fact]
-    public void StateEdit_IsListedAndOffByDefault()
-    {
-        Assert.Contains(Labs.StateEdit, Labs.All);
-        Assert.DoesNotContain(Labs.StateEdit.Id, new Settings().LabsSwitchesOn);
+        var path = Path.Combine(Path.GetTempPath(), $"lb-settings-{Guid.NewGuid():N}.json");
+        try
+        {
+            File.WriteAllText(path, "{ \"LabsSwitchesOn\": [\"state-edit\", \"check-formula\"] }");
+            var loaded = Settings.Load(path);
+            Assert.Contains(Labs.State.Id, loaded.LabsSwitchesOn);
+            Assert.Contains(Labs.CheckFormula.Id, loaded.LabsSwitchesOn);
+            Assert.DoesNotContain("state-edit", loaded.LabsSwitchesOn);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
     }
 
     [Fact]
